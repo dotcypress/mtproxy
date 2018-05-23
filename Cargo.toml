@@ -1,0 +1,30 @@
+[package]
+authors = ["Vitaly Domnikov <dotcypress@gmail.com>"]
+description = "MTProto Proxy Server"
+documentation = "https://github.com/dotcypress/mtproxy"
+homepage = "https://github.com/dotcypress/mtproxy"
+license = "MIT/Apache-2.0"
+name = "mtproxy"
+readme = "README.md"
+repository = "https://github.com/dotcypress/mtproxy"
+version = "0.0.1"
+
+[badges.appveyor]
+branch = "master"
+repository = "dotcypress/mtproxy"
+service = "github"
+
+[badges.travis-ci]
+branch = "master"
+repository = "dotcypress/mtproxy"
+
+[dependencies]
+bytes = "0.4.7"
+clap = "2.31.2"
+env_logger = "0.5.10"
+lazy_static = "1.0.0"
+log = "0.4.1"
+mio = "0.6.14"
+rand = "0.4.2"
+rust-crypto = "0.2.36"
+slab = "0.4.0"
