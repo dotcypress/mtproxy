@@ -71,6 +71,10 @@ impl Server {
               let dst = self.pumps.get(peer_token.0).unwrap();
               let mut dst = dst.borrow_mut();
               dst.push(&buf);
+              let buf = dst.pull();
+              if !buf.is_empty() {
+                pump.push(&buf);
+              }
             }
           }
           _ => {}

@@ -4,6 +4,10 @@
 
 `mio` powered Telegram MTProto proxy server.
 
+## Docker
+
+`docker run -p 1984:1984 -dti dotcypress/mtproxy -s 'proxy secret'`
+
 ## Installation
 
 You can use the `cargo install` command:
