@@ -1,7 +1,6 @@
-use std::{
-  cell::RefCell, collections::{HashMap, HashSet}, io::{self, ErrorKind}, net::SocketAddr, thread,
-  time::Duration, usize,
-};
+use std::collections::{HashMap, HashSet};
+use std::io::{self, ErrorKind};
+use std::{cell::RefCell, net::SocketAddr, usize};
 
 use crypto::{digest::Digest, sha2::Sha256};
 use mio::{net::TcpListener, unix::UnixReady, Events, Poll, PollOpt, Ready, Token};
@@ -51,42 +50,8 @@ impl Server {
     let mut events = Events::with_capacity(1024);
 
     loop {
-      if self.poll.poll(&mut events, None)? == 0 {
-        info!("idle");
-        thread::sleep(Duration::from_millis(100));
-      }
-
-      let seen_tokens = self.dispatch(&events)?;
-
-      for token in &seen_tokens {
-        let pump = self.pumps.get(token.0);
-        if pump.is_none() {
-          continue;
-        }
-        let mut pump = pump.unwrap().borrow_mut();
-        match self.links.get(token) {
-          Some(peer_token) => {
-            let buf = pump.pull();
-            if !buf.is_empty() {
-              let dst = self.pumps.get(peer_token.0).unwrap();
-              let mut dst = dst.borrow_mut();
-              dst.push(&buf);
-              let buf = dst.pull();
-              if !buf.is_empty() {
-                pump.push(&buf);
-              }
-            }
-          }
-          _ => {}
-        }
-
-        self.poll.reregister(
-          pump.sock(),
-          *token,
-          Ready::readable() | Ready::writable() | UnixReady::hup(),
-          PollOpt::edge() | PollOpt::oneshot(),
-        )?;
-      }
+      self.poll.poll(&mut events, None)?;
+      self.dispatch(&events)?;
     }
   }
 
@@ -113,7 +78,7 @@ impl Server {
     self.poll.register(
       pump.sock(),
       token,
-      Ready::readable() | Ready::writable() | UnixReady::hup(),
+      pump.interest(),
       PollOpt::edge() | PollOpt::oneshot(),
     )?;
 
@@ -126,24 +91,23 @@ impl Server {
     Ok(())
   }
 
-  fn dispatch(&mut self, events: &Events) -> io::Result<Vec<Token>> {
+  fn dispatch(&mut self, events: &Events) -> io::Result<()> {
     let mut stale = HashSet::new();
-    let mut completed = HashSet::new();
-    let mut new_pumps = HashMap::new();
+    let mut seen = HashSet::new();
+    let mut new_peers = HashMap::new();
 
     for event in events {
+      trace!("{:?}", event);
+
       let token = event.token();
 
       if token == ROOT_TOKEN {
         self.accept()?;
         continue;
       }
+      seen.insert(token);
 
       let readiness = UnixReady::from(event.readiness());
-      if readiness.is_hup() {
-        stale.insert(token);
-        continue;
-      }
 
       let mut pump = {
         let pump = &self.pumps.get(token.0);
@@ -157,9 +121,9 @@ impl Server {
       if readiness.is_readable() {
         loop {
           match pump.drain() {
-            Ok(ret) => match ret {
+            Ok(peer) => match peer {
               Some(peer_pump) => {
-                new_pumps.insert(token, peer_pump);
+                new_peers.insert(token, peer_pump);
               }
               _ => {}
             },
@@ -173,15 +137,20 @@ impl Server {
             }
           }
         }
+
+        if let Some(peer_token) = self.links.get(&token) {
+          self.fan_out(&mut pump, peer_token)?;
+        }
       }
 
       if readiness.is_writable() {
+        if let Some(peer_token) = self.links.get(&token) {
+          self.fan_in(&mut pump, peer_token)?;
+        }
+
         loop {
           match pump.flush() {
             Ok(_) => {}
-            Err(ref e) if e.kind() == ErrorKind::WriteZero => {
-              break;
-            }
             Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
               break;
             }
@@ -194,14 +163,19 @@ impl Server {
         }
       }
 
-      completed.insert(token);
+      if readiness.is_hup() || readiness.is_error() {
+        stale.insert(token);
+      } else {
+        self.poll.reregister(
+          pump.sock(),
+          token,
+          pump.interest(),
+          PollOpt::edge() | PollOpt::oneshot(),
+        )?;
+      }
     }
 
-    for token in stale {
-      self.drop_pump(token);
-    }
-
-    for (owner, pump) in new_pumps {
+    for (owner, pump) in new_peers {
       let idx = self.pumps.insert(RefCell::new(pump));
       let pump = self.pumps.get(idx).unwrap().borrow();
 
@@ -213,24 +187,77 @@ impl Server {
       self.poll.register(
         pump.sock(),
         token,
-        Ready::readable() | Ready::writable() | UnixReady::hup(),
+        pump.interest(),
         PollOpt::edge() | PollOpt::oneshot(),
       )?;
     }
 
-    Ok(completed.into_iter().collect::<Vec<Token>>())
+    for token in stale {
+      let pump = self.pumps.remove(token.0);
+      let mut pump = pump.borrow_mut();
+
+      info!("dropping pump: {:?}", token);
+      self.poll.deregister(pump.sock())?;
+
+      match self.links.remove(&token) {
+        Some(peer_token) => {
+          self.links.remove(&peer_token);
+          let peer_pump = self.pumps.remove(peer_token.0);
+          let mut peer_pump = peer_pump.borrow_mut();
+          if let Ok(_) = peer_pump.flush() {
+            trace!("last will sent: {:?}", peer_token);
+          }
+          info!("dropping peer pump: {:?}", peer_token);
+          self.poll.deregister(peer_pump.sock())?;
+        }
+        _ => {}
+      }
+    }
+
+    Ok(())
   }
 
-  fn drop_pump(&mut self, token: Token) {
-    trace!("dropping pump: {:?}", token);
-    self.pumps.remove(token.0);
-    match &self.links.remove(&token) {
-      Some(peer_token) => {
-        trace!("dropping pump peer: {:?}", peer_token);
-        self.pumps.remove(peer_token.0);
-        self.links.remove(&peer_token);
-      }
-      None => {}
+  fn fan_out(&self, pump: &mut Pump, peer_token: &Token) -> io::Result<bool> {
+    trace!("fan out to {:?}", peer_token);
+    let buf = pump.pull();
+    if buf.is_empty() {
+      return Ok(false);
     }
+
+    let peer = self.pumps.get(peer_token.0).unwrap();
+    let mut peer = peer.borrow_mut();
+    peer.push(&buf);
+
+    self.poll.reregister(
+      peer.sock(),
+      *peer_token,
+      peer.interest(),
+      PollOpt::edge() | PollOpt::oneshot(),
+    )?;
+
+    Ok(true)
+  }
+
+  fn fan_in(&self, pump: &mut Pump, peer_token: &Token) -> io::Result<bool> {
+    trace!("fan in from {:?}", peer_token);
+
+    let peer = self.pumps.get(peer_token.0).unwrap();
+
+    let mut peer = peer.borrow_mut();
+    let buf = peer.pull();
+    if buf.is_empty() {
+      return Ok(false);
+    }
+
+    pump.push(&buf);
+
+    self.poll.reregister(
+      peer.sock(),
+      *peer_token,
+      peer.interest(),
+      PollOpt::edge() | PollOpt::oneshot(),
+    )?;
+
+    Ok(true)
   }
 }

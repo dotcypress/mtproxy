@@ -8,9 +8,9 @@ extern crate log;
 extern crate bytes;
 extern crate clap;
 extern crate crypto;
+extern crate env_logger;
 extern crate mio;
 extern crate rand;
-extern crate env_logger;
 extern crate slab;
 
 mod proto;
@@ -55,11 +55,6 @@ fn main() -> Result<(), io::Error> {
   let addr = String::from(addr).parse().unwrap();
 
   let mut serv = Server::new(addr, seed);
-  println!(
-    "Apply proxy: https://t.me/proxy?server={0}&port={1}&secret={2}",
-    addr.ip(),
-    addr.port(),
-    serv.secret()
-  );
+  println!("Proxy Secret: {}", serv.secret());
   serv.run()
 }

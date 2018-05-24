@@ -1,8 +1,7 @@
-use std::{
-  io::{self, prelude::*}, mem, u16,
-};
+use std::io::{self, prelude::*};
+use std::{mem, u16};
 
-use mio::net::TcpStream;
+use mio::{net::TcpStream, unix::UnixReady, Ready};
 
 use proto::Proto;
 
@@ -15,6 +14,7 @@ pub struct Pump {
   proto: Proto,
   read_buf: Vec<u8>,
   write_buf: Vec<u8>,
+  interest: Ready,
 }
 
 impl Pump {
@@ -25,6 +25,7 @@ impl Pump {
       proto: Proto::default(),
       read_buf: Vec::with_capacity(BUF_SIZE),
       write_buf: Vec::with_capacity(BUF_SIZE),
+      interest: Ready::readable() | UnixReady::error() | UnixReady::hup(),
     }
   }
 
@@ -36,6 +37,10 @@ impl Pump {
     !self.proto.seed().is_empty()
   }
 
+  pub fn interest(&self) -> Ready {
+    self.interest
+  }
+
   pub fn push(&mut self, input: &[u8]) {
     if !self.ready() {
       debug!("failed to push. protocol not ready.");
@@ -44,6 +49,9 @@ impl Pump {
     let mut buf = vec![0u8; input.len()];
     self.proto.enc(input, &mut buf);
     self.write_buf.append(&mut buf);
+    if !self.write_buf.is_empty() {
+      self.interest.insert(Ready::writable());
+    }
   }
 
   pub fn pull(&mut self) -> Vec<u8> {
@@ -55,40 +63,40 @@ impl Pump {
     let mut buf = vec![0u8; self.read_buf.len()];
     self.proto.dec(&self.read_buf, &mut buf);
     self.read_buf.clear();
+    self.interest.insert(Ready::readable());
     buf
   }
 
   pub fn flush(&mut self) -> io::Result<()> {
-    if self.write_buf.is_empty() {
-      return Err(io::Error::new(
-        io::ErrorKind::WriteZero,
-        "Write buffer is empty",
-      ));
-    }
-
     match self.sock.write(&self.write_buf) {
       Ok(0) => {
-        warn!("flush zero");
+        trace!("flush zero");
       }
       Ok(n) => {
-        trace!("flush {} bytes", n);
+        trace!("write {} bytes", n);
         let mut rest = self.write_buf.split_off(n);
         mem::swap(&mut rest, &mut self.write_buf);
       }
       Err(e) => return Err(e),
+    }
+    if self.write_buf.is_empty() {
+      self.interest.remove(Ready::writable());
+      return Err(io::Error::from(io::ErrorKind::WouldBlock));
     }
     Ok(())
   }
 
   pub fn drain(&mut self) -> io::Result<Option<Pump>> {
     if self.read_buf.len() > MAX_READ_BUF_SIZE {
-      return Err(io::Error::new(io::ErrorKind::Other, "Read buffer is full"));
+      debug!("read buffer is full");
+      self.interest.remove(Ready::readable());
+      return Err(io::Error::from(io::ErrorKind::WouldBlock));
     }
     let mut buf = vec![0u8; BUF_SIZE];
     match self.sock.read(&mut buf) {
-      Ok(0) => return Ok(None),
+      Ok(0) => return Err(io::Error::from(io::ErrorKind::WouldBlock)),
       Ok(n) => {
-        trace!("drain {} bytes", n);
+        trace!("read {} bytes", n);
         buf.split_off(n);
         self.read_buf.extend(buf);
 
@@ -96,7 +104,7 @@ impl Pump {
           let mut seed = self.read_buf.split_off(64);
           mem::swap(&mut seed, &mut self.read_buf);
           self.proto = Proto::from_seed(&seed, &self.secret)?;
-          trace!("connecting to DC: {}", self.proto.dc());
+          trace!("connected to Tg server @ {}", self.proto.dc());
           let sock = TcpStream::connect(self.proto.dc())?;
           let proto = Proto::new();
 
@@ -107,6 +115,7 @@ impl Pump {
             sock,
             secret: vec![],
             proto,
+            interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
             read_buf: Vec::with_capacity(BUF_SIZE),
             write_buf,
           }));

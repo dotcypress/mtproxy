@@ -3,9 +3,8 @@ extern crate rand;
 use std::{io, net::SocketAddr};
 
 use bytes::{Buf, IntoBuf};
-use crypto::{
-  aes::{self, KeySize}, symmetriccipher::SynchronousStreamCipher,
-};
+use crypto::aes::{self, KeySize};
+use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::{digest::Digest, sha2::Sha256};
 use rand::Rng;
 
