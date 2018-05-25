@@ -6,7 +6,7 @@ use bytes::{Buf, IntoBuf};
 use crypto::aes::{self, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::{digest::Digest, sha2::Sha256};
-use rand::Rng;
+use rand::RngCore;
 
 lazy_static! {
   static ref DATA_CENTERS: [SocketAddr; 5] = {
@@ -30,7 +30,7 @@ pub struct Proto {
 impl Proto {
   pub fn new() -> Proto {
     let mut buf = vec![0u8; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::thread_rng();    
     loop {
       rng.fill_bytes(&mut buf);
       let check = ((buf[7] as u32) << 24)

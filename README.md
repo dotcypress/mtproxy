@@ -21,5 +21,5 @@ $ cp target/release/mtproxy ~/.bin # assuming .bin is in your path
 
 ## Docker
 
-`docker run -p 1984:1984 -dti dotcypress/mtproxy -s 'proxy secret'`
-`docker logs %container_id%`
+* `docker run -p 1984:1984 -dti dotcypress/mtproxy -s 'proxy secret'`
+* `docker logs %container_id%`

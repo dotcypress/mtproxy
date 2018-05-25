@@ -15,6 +15,7 @@ pub struct Server {
   poll: Poll,
   secret: Vec<u8>,
   pumps: Slab<RefCell<Pump>>,
+  zombie: HashSet<Token>,
   links: HashMap<Token, Token>,
 }
 
@@ -29,6 +30,7 @@ impl Server {
 
     Server {
       secret,
+      zombie: HashSet::new(),
       sock: TcpListener::bind(&addr).expect("Failed to bind"),
       poll: Poll::new().expect("Failed to create Poll"),
       pumps: Slab::with_capacity(MAX_PUMPS),
@@ -192,28 +194,45 @@ impl Server {
       )?;
     }
 
+    self.drop_zombies()?;
+
     for token in stale {
-      let pump = self.pumps.remove(token.0);
-      let mut pump = pump.borrow_mut();
-
-      info!("dropping pump: {:?}", token);
-      self.poll.deregister(pump.sock())?;
-
-      match self.links.remove(&token) {
-        Some(peer_token) => {
-          self.links.remove(&peer_token);
-          let peer_pump = self.pumps.remove(peer_token.0);
-          let mut peer_pump = peer_pump.borrow_mut();
-          if let Ok(_) = peer_pump.flush() {
-            trace!("last will sent: {:?}", peer_token);
-          }
-          info!("dropping peer pump: {:?}", peer_token);
-          self.poll.deregister(peer_pump.sock())?;
-        }
-        _ => {}
-      }
+      self.drop_pump(token)?;
     }
 
+    Ok(())
+  }
+
+  fn drop_zombies(&mut self) -> io::Result<()> {
+    if self.zombie.len() == 0 {
+      return Ok(());
+    }
+
+    let zombie: Vec<Token> = self.zombie.iter().cloned().collect();
+    self.zombie.clear();
+
+    for token in zombie {
+      self.drop_pump(token)?;
+    }
+
+    Ok(())
+  }
+
+  fn drop_pump(&mut self, token: Token) -> io::Result<()> {
+    let pump = self.pumps.remove(token.0);
+    let pump = pump.borrow_mut();
+
+    info!("dropping pump: {:?}", token);
+    self.poll.deregister(pump.sock())?;
+
+    match self.links.remove(&token) {
+      Some(peer_token) => {
+        info!("dropping link to peer: {:?}", peer_token);
+        self.links.remove(&peer_token);
+        self.zombie.insert(peer_token);
+      }
+      _ => {}
+    }
     Ok(())
   }
 
