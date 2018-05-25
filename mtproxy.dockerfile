@@ -1,9 +1,10 @@
-FROM rust:1-stretch as builder
-WORKDIR /usr/src/mtproxy
-COPY . .
+FROM ekidd/rust-musl-builder as builder
+WORKDIR /home/rust/src
+ADD . ./
+RUN sudo chown -R rust:rust .
 RUN cargo build --release
 
-FROM debian:stretch-slim
-COPY --from=builder /usr/src/mtproxy/target/release/mtproxy /bin/
+FROM alpine:latest
+COPY --from=builder /home/rust/src/target/x86_64-unknown-linux-musl/release/mtproxy /bin/
 
 ENTRYPOINT ["mtproxy"]
