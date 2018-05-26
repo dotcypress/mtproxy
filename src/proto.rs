@@ -30,7 +30,7 @@ pub struct Proto {
 impl Proto {
   pub fn new() -> Proto {
     let mut buf = vec![0u8; 64];
-    let mut rng = rand::thread_rng();    
+    let mut rng = rand::thread_rng();
     loop {
       rng.fill_bytes(&mut buf);
       let check = ((buf[7] as u32) << 24)
@@ -104,15 +104,6 @@ impl Proto {
       dec,
       enc,
     })
-  }
-
-  pub fn default() -> Proto {
-    Proto {
-      seed: vec![],
-      dc_idx: 0,
-      dec: aes::ctr(KeySize::KeySize256, &vec![0u8; 64], &vec![0u8; 64]),
-      enc: aes::ctr(KeySize::KeySize256, &vec![0u8; 64], &vec![0u8; 64]),
-    }
   }
 
   pub fn seed(&self) -> &[u8] {

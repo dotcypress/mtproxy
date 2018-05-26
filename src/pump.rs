@@ -1,4 +1,4 @@
-use std::io::{self, prelude::*};
+use std::io::{self, prelude::*, ErrorKind};
 use std::{mem, u16};
 
 use mio::{net::TcpStream, unix::UnixReady, Ready};
@@ -11,7 +11,7 @@ const MAX_READ_BUF_SIZE: usize = BUF_SIZE * 512;
 pub struct Pump {
   sock: TcpStream,
   secret: Vec<u8>,
-  proto: Proto,
+  proto: Option<Proto>,
   read_buf: Vec<u8>,
   write_buf: Vec<u8>,
   interest: Ready,
@@ -22,7 +22,7 @@ impl Pump {
     Pump {
       sock,
       secret: secret.to_vec(),
-      proto: Proto::default(),
+      proto: None,
       read_buf: Vec::with_capacity(BUF_SIZE),
       write_buf: Vec::with_capacity(BUF_SIZE),
       interest: Ready::readable() | UnixReady::error() | UnixReady::hup(),
@@ -33,96 +33,109 @@ impl Pump {
     &self.sock
   }
 
-  pub fn ready(&self) -> bool {
-    !self.proto.seed().is_empty()
-  }
-
   pub fn interest(&self) -> Ready {
     self.interest
   }
 
   pub fn push(&mut self, input: &[u8]) {
-    if !self.ready() {
-      debug!("failed to push. protocol not ready.");
-      return;
-    }
-    let mut buf = vec![0u8; input.len()];
-    self.proto.enc(input, &mut buf);
-    self.write_buf.append(&mut buf);
-    if !self.write_buf.is_empty() {
-      self.interest.insert(Ready::writable());
+    match self.proto {
+      Some(ref mut proto) => {
+        let mut buf = vec![0u8; input.len()];
+        proto.enc(input, &mut buf);
+        self.write_buf.append(&mut buf);
+        self.interest.insert(Ready::writable());
+      }
+      None => {
+        debug!("failed to push. protocol not ready.");
+      }
     }
   }
 
   pub fn pull(&mut self) -> Vec<u8> {
-    if !self.ready() {
-      debug!("failed to pull. protocol not ready.");
-      return vec![];
+    match self.proto {
+      Some(ref mut proto) => {
+        let mut buf = vec![0u8; self.read_buf.len()];
+        proto.dec(&self.read_buf, &mut buf);
+        self.read_buf.clear();
+        self.interest.insert(Ready::readable());
+        buf
+      }
+      None => {
+        debug!("failed to pull. protocol not ready.");
+        vec![]
+      }
     }
-
-    let mut buf = vec![0u8; self.read_buf.len()];
-    self.proto.dec(&self.read_buf, &mut buf);
-    self.read_buf.clear();
-    self.interest.insert(Ready::readable());
-    buf
   }
 
   pub fn flush(&mut self) -> io::Result<()> {
-    match self.sock.write(&self.write_buf) {
-      Ok(0) => {
-        trace!("flush zero");
+    loop {
+      match self.sock.write(&self.write_buf) {
+        Ok(n) => {
+          trace!("write {} bytes", n);
+          let mut rest = self.write_buf.split_off(n);
+          mem::swap(&mut rest, &mut self.write_buf);
+          if self.write_buf.is_empty() {
+            self.interest.remove(Ready::writable());
+            break;
+          }
+        }
+        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+          break;
+        }
+        Err(e) => return Err(e),
       }
-      Ok(n) => {
-        trace!("write {} bytes", n);
-        let mut rest = self.write_buf.split_off(n);
-        mem::swap(&mut rest, &mut self.write_buf);
-      }
-      Err(e) => return Err(e),
-    }
-    if self.write_buf.is_empty() {
-      self.interest.remove(Ready::writable());
-      return Err(io::Error::from(io::ErrorKind::WouldBlock));
     }
     Ok(())
   }
 
   pub fn drain(&mut self) -> io::Result<Option<Pump>> {
-    if self.read_buf.len() > MAX_READ_BUF_SIZE {
-      debug!("read buffer is full");
-      self.interest.remove(Ready::readable());
-      return Err(io::Error::from(io::ErrorKind::WouldBlock));
-    }
-    let mut buf = vec![0u8; BUF_SIZE];
-    match self.sock.read(&mut buf) {
-      Ok(0) => return Err(io::Error::from(io::ErrorKind::WouldBlock)),
-      Ok(n) => {
-        trace!("read {} bytes", n);
-        buf.split_off(n);
-        self.read_buf.extend(buf);
-
-        if !self.ready() && self.read_buf.len() >= 64 {
-          let mut seed = self.read_buf.split_off(64);
-          mem::swap(&mut seed, &mut self.read_buf);
-          self.proto = Proto::from_seed(&seed, &self.secret)?;
-          trace!("connected to Tg server @ {}", self.proto.dc());
-          let sock = TcpStream::connect(self.proto.dc())?;
-          let proto = Proto::new();
-
-          let mut write_buf = Vec::with_capacity(BUF_SIZE);
-          write_buf.append(&mut proto.seed().to_vec());
-
-          return Ok(Some(Pump {
-            sock,
-            secret: vec![],
-            proto,
-            interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
-            read_buf: Vec::with_capacity(BUF_SIZE),
-            write_buf,
-          }));
-        }
-        return Ok(None);
+    let mut new_pump = None;
+    
+    loop {
+      if self.read_buf.len() > MAX_READ_BUF_SIZE {
+        debug!("read buffer is full");
+        self.interest.remove(Ready::readable());
+        break;
       }
-      Err(e) => return Err(e),
+      let mut buf = vec![0u8; BUF_SIZE];
+      match self.sock.read(&mut buf) {
+        Ok(0) => break,
+        Ok(n) => {
+          trace!("read {} bytes", n);
+          buf.split_off(n);
+          self.read_buf.extend(buf);
+          if self.proto.is_none() && self.read_buf.len() >= 64 {
+            new_pump = Some(self.connect_peer()?)
+          }
+        }
+        Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
+          break;
+        }
+        Err(e) => return Err(e),
+      }
     }
+    Ok(new_pump)
+  }
+
+  fn connect_peer(&mut self) -> io::Result<Pump> {
+    let mut seed = self.read_buf.split_off(64);
+    mem::swap(&mut seed, &mut self.read_buf);
+
+    let proto = Proto::from_seed(&seed, &self.secret)?;
+    let sock = TcpStream::connect(proto.dc())?;
+
+    self.proto = Some(proto);
+    let seed_proto = Proto::new();
+    let mut write_buf = Vec::with_capacity(BUF_SIZE);
+    write_buf.append(&mut seed_proto.seed().to_vec());
+
+    Ok(Pump {
+      sock,
+      secret: vec![],
+      proto: Some(seed_proto),
+      interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
+      read_buf: Vec::with_capacity(BUF_SIZE),
+      write_buf,
+    })
   }
 }

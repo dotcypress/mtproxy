@@ -52,9 +52,13 @@ fn main() -> Result<(), io::Error> {
 
   let seed = args.value_of("seed").unwrap();
   let addr = args.value_of("addres").unwrap_or("0.0.0.0:1984");
-  let addr = String::from(addr).parse().unwrap();
+  let addr = String::from(addr)
+    .parse()
+    .expect(&format!("Not supported address: {}", addr));
 
   let mut serv = Server::new(addr, seed);
-  println!("Proxy Secret: {}", serv.secret());
+  println!("Secret: {}", serv.secret());
+  println!("Ip:     {}", addr.ip());
+  println!("Port:   {}\n", addr.port());
   serv.run()
 }
