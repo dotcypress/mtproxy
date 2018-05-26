@@ -95,7 +95,7 @@ impl Proto {
     }
     let dc = buf_dec[60..62].into_buf().get_i16_le().abs();
     if dc == 0 || dc > 5 {
-      return Err(io::Error::new(io::ErrorKind::Other, "Unsupported DC index"));
+      return Err(io::Error::new(io::ErrorKind::Other, format!("Unsupported DC index: {}", dc)));
     }
     let dc_idx = (dc - 1) as usize;
     Ok(Proto {
