@@ -20,6 +20,16 @@ $ cp target/release/mtproxy ~/.bin # assuming .bin is in your path
 ```
 
 ## Docker
+### Start proxy
+* `docker run --name 'mtproto_proxy' --restart unless-stopped -p 1984:1984 -dti dotcypress/mtproxy -s 'proxy secret'`
 
-* `docker run -p 1984:1984 -dti dotcypress/mtproxy -s 'proxy secret'`
-* `docker logs %container_id%`
+'proxy secret' - is seed for generating secret, you should choose another word or generate random with `openssl rand -hex 15`
+
+### Get secret
+* `docker logs mtproto_proxy`
+
+### Stop proxy
+* `docker stop mtproto_proxy`
+
+### Remove proxy
+* `docker rm mtproto_proxy`
