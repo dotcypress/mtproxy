@@ -18,7 +18,7 @@ pub struct Pump {
 }
 
 impl Pump {
-  pub fn new(sock: TcpStream, secret: &[u8]) -> Pump {
+  pub fn from_secret(secret: &[u8], sock: TcpStream) -> Pump {
     Pump {
       sock,
       secret: secret.to_vec(),
@@ -26,6 +26,21 @@ impl Pump {
       read_buf: Vec::with_capacity(BUF_SIZE),
       write_buf: Vec::with_capacity(BUF_SIZE),
       interest: Ready::readable() | UnixReady::error() | UnixReady::hup(),
+    }
+  }
+
+  pub fn new(sock: TcpStream) -> Pump {
+    let seed_proto = Proto::new();
+    let mut write_buf = Vec::with_capacity(BUF_SIZE);
+    write_buf.append(&mut seed_proto.seed().to_vec());
+
+    Pump {
+      sock,
+      secret: vec![],
+      proto: Some(seed_proto),
+      interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
+      read_buf: Vec::with_capacity(BUF_SIZE),
+      write_buf,
     }
   }
 
@@ -88,9 +103,9 @@ impl Pump {
     Ok(())
   }
 
-  pub fn drain(&mut self) -> io::Result<Option<Pump>> {
-    let mut new_pump = None;
-    
+  pub fn drain(&mut self) -> io::Result<Option<usize>> {
+    let mut link_pending = None;
+
     loop {
       if self.read_buf.len() > MAX_READ_BUF_SIZE {
         debug!("read buffer is full");
@@ -105,7 +120,12 @@ impl Pump {
           buf.split_off(n);
           self.read_buf.extend(buf);
           if self.proto.is_none() && self.read_buf.len() >= 64 {
-            new_pump = Some(self.connect_peer()?)
+            let mut seed = self.read_buf.split_off(64);
+            mem::swap(&mut seed, &mut self.read_buf);
+
+            let proto = Proto::from_seed(&seed, &self.secret)?;
+            link_pending = Some(proto.dc());
+            self.proto = Some(proto);
           }
         }
         Err(ref e) if e.kind() == ErrorKind::WouldBlock => {
@@ -114,28 +134,6 @@ impl Pump {
         Err(e) => return Err(e),
       }
     }
-    Ok(new_pump)
-  }
-
-  fn connect_peer(&mut self) -> io::Result<Pump> {
-    let mut seed = self.read_buf.split_off(64);
-    mem::swap(&mut seed, &mut self.read_buf);
-
-    let proto = Proto::from_seed(&seed, &self.secret)?;
-    let sock = TcpStream::connect(proto.dc())?;
-
-    self.proto = Some(proto);
-    let seed_proto = Proto::new();
-    let mut write_buf = Vec::with_capacity(BUF_SIZE);
-    write_buf.append(&mut seed_proto.seed().to_vec());
-
-    Ok(Pump {
-      sock,
-      secret: vec![],
-      proto: Some(seed_proto),
-      interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
-      read_buf: Vec::with_capacity(BUF_SIZE),
-      write_buf,
-    })
+    Ok(link_pending)
   }
 }

@@ -1,24 +1,12 @@
 extern crate rand;
 
-use std::{io, net::SocketAddr};
+use std::io;
 
 use bytes::{Buf, IntoBuf};
 use crypto::aes::{self, KeySize};
 use crypto::symmetriccipher::SynchronousStreamCipher;
 use crypto::{digest::Digest, sha2::Sha256};
 use rand::RngCore;
-
-lazy_static! {
-  static ref DATA_CENTERS: [SocketAddr; 5] = {
-    [
-      "149.154.175.50:443".parse().unwrap(),
-      "149.154.167.51:443".parse().unwrap(),
-      "149.154.175.100:443".parse().unwrap(),
-      "149.154.167.91:443".parse().unwrap(),
-      "149.154.171.5:443".parse().unwrap(),
-    ]
-  };
-}
 
 pub struct Proto {
   seed: Vec<u8>,
@@ -110,8 +98,8 @@ impl Proto {
     &self.seed
   }
 
-  pub fn dc(&self) -> &SocketAddr {
-    &DATA_CENTERS[self.dc_idx]
+  pub fn dc(&self) -> usize {
+    self.dc_idx
   }
 
   pub fn dec(&mut self, input: &[u8], output: &mut [u8]) {

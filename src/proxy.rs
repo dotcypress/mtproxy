@@ -4,6 +4,7 @@ use std::{cell::RefCell, net::SocketAddr, usize};
 
 use crypto::{digest::Digest, sha2::Sha256};
 use mio::{net::TcpListener, unix::UnixReady, Events, Poll, PollOpt, Ready, Token};
+use pool::DcPool;
 use pump::Pump;
 use slab::Slab;
 
@@ -14,6 +15,7 @@ pub struct Server {
   sock: TcpListener,
   poll: Poll,
   secret: Vec<u8>,
+  dc_pool: DcPool,
   pumps: Slab<RefCell<Pump>>,
   detached: HashSet<Token>,
   links: HashMap<Token, Token>,
@@ -30,6 +32,7 @@ impl Server {
 
     Server {
       secret,
+      dc_pool: DcPool::new(),
       detached: HashSet::new(),
       sock: TcpListener::bind(&addr).expect("Failed to bind"),
       poll: Poll::new().expect("Failed to create Poll"),
@@ -53,6 +56,7 @@ impl Server {
 
     loop {
       self.poll.poll(&mut events, None)?;
+      self.dc_pool.invalidate();
       self.dispatch(&events)?;
       trace!(
         "pumps: {}, links: {}, detached: {}",
@@ -88,9 +92,19 @@ impl Server {
       if readiness.is_readable() {
         trace!("read event: {:?}", token);
         match pump.drain() {
-          Ok(Some(mut peer)) => {
+          Ok(Some(mut dc_idx)) => {
+            let sock = self.dc_pool.get(dc_idx)?;
+            let mut peer = Pump::new(sock);
             let buf = pump.pull();
-            peer.push(&buf);
+            if buf.len() > 0 {
+              peer.push(&buf);
+              match peer.flush() {
+                Err(e) => {
+                  warn!("failed to write first data: {:?}", e);
+                }
+                _ => {}
+              }
+            }
             new_peers.insert(token, peer);
           }
           Ok(_) => {}
@@ -118,9 +132,12 @@ impl Server {
           }
         }
       }
-
-      if readiness.is_hup() || readiness.is_error() {
-        trace!("{:?}", event);
+      
+      if readiness.is_hup() {
+        trace!("hup event: {:?}", event.token());
+        stale.insert(token);
+      } else if readiness.is_error() {
+        trace!("error event {:?}", event.token());
         stale.insert(token);
       } else {
         self.poll.reregister(
@@ -139,6 +156,7 @@ impl Server {
       let peer_token = Token(idx);
       self.links.insert(peer_token, token);
       self.links.insert(token, peer_token);
+      info!("linked to dc: {:?} -> {:?}", token, peer_token);
 
       self.poll.register(
         peer_pump.sock(),
@@ -146,7 +164,6 @@ impl Server {
         peer_pump.interest(),
         PollOpt::edge() | PollOpt::oneshot(),
       )?;
-      info!("connected to dc: {:?} -> {:?}", token, peer_token);
     }
 
     for token in &self.detached {
@@ -178,7 +195,7 @@ impl Server {
       }
     };
 
-    let pump = Pump::new(sock, &self.secret);
+    let pump = Pump::from_secret(&self.secret, sock);
     let idx = self.pumps.insert(RefCell::new(pump));
     let pump = self.pumps.get(idx).unwrap().borrow();
 

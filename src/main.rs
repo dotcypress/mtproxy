@@ -13,6 +13,7 @@ extern crate mio;
 extern crate rand;
 extern crate slab;
 
+mod pool;
 mod proto;
 mod proxy;
 mod pump;
@@ -57,8 +58,8 @@ fn main() -> Result<(), io::Error> {
     .expect(&format!("Not supported address: {}", addr));
 
   let mut serv = Server::new(addr, seed);
-  println!("Secret: {}", serv.secret());
+  println!("Secret: {}\n", serv.secret());
   println!("Ip:     {}", addr.ip());
-  println!("Port:   {}\n", addr.port());
+  println!("Port:   {}", addr.port());
   serv.run()
 }
