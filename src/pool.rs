@@ -39,10 +39,6 @@ impl DcPool {
   pub fn invalidate(&mut self) {
     for (dc_idx, dc_conns) in self.conns.iter_mut().enumerate() {
       while dc_conns.len() < POOL_SIZE {
-        info!(
-          "connecting to dc: {:?} @ {:?}",
-          dc_idx, &DATA_CENTERS[dc_idx]
-        );
         let stream = TcpStream::connect(&DATA_CENTERS[dc_idx]).expect("DC fail");
         dc_conns.push_front(stream);
       }

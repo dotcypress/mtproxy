@@ -5,7 +5,8 @@ use mio::{net::TcpStream, unix::UnixReady, Ready};
 
 use proto::Proto;
 
-const BUF_SIZE: usize = u16::MAX as usize;
+const BUF_SIZE: usize = u16::MAX as usize * 2;
+
 const MAX_READ_BUF_SIZE: usize = BUF_SIZE * 512;
 
 pub struct Pump {
