@@ -55,7 +55,6 @@ impl Server {
     let mut events = Events::with_capacity(1024);
 
     loop {
-      self.dc_pool.invalidate();
       self.poll.poll(&mut events, None)?;
       self.dispatch(&events)?;
       trace!(
@@ -63,7 +62,8 @@ impl Server {
         self.pumps.len(),
         self.links.len(),
         self.detached.len()
-      )
+      );
+      self.dc_pool.invalidate();
     }
   }
 

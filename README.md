@@ -8,7 +8,8 @@
 
 You can use the `cargo install` command:
 
-    $ cargo install mtproxy
+`$ rustup update`
+`$ cargo install mtproxy`
 
 or a classic build and run:
 
@@ -18,6 +19,8 @@ $ cd mtproxy
 $ cargo build --release
 $ cp target/release/mtproxy ~/.bin # assuming .bin is in your path
 ```
+
+*Note*: `mtproxy` requires rust v1.26.0 or higher.
 
 ## Docker
 ### Start proxy
