@@ -7,7 +7,7 @@ use proto::Proto;
 
 const BUF_SIZE: usize = u16::MAX as usize * 2;
 
-const MAX_READ_BUF_SIZE: usize = BUF_SIZE * 512;
+const MAX_READ_BUF_SIZE: usize = BUF_SIZE * 8;
 
 pub struct Pump {
   sock: TcpStream,
@@ -68,6 +68,9 @@ impl Pump {
   }
 
   pub fn pull(&mut self) -> Vec<u8> {
+    if self.read_buf.is_empty() {
+      return vec![];
+    }
     match self.proto {
       Some(ref mut proto) => {
         let mut buf = vec![0u8; self.read_buf.len()];
@@ -120,13 +123,18 @@ impl Pump {
           trace!("read {} bytes", n);
           buf.split_off(n);
           self.read_buf.extend(buf);
-          if self.proto.is_none() && self.read_buf.len() >= 64 {
-            let mut seed = self.read_buf.split_off(64);
-            mem::swap(&mut seed, &mut self.read_buf);
-
-            let proto = Proto::from_seed(&seed, &self.secret)?;
-            link_pending = Some(proto.dc());
-            self.proto = Some(proto);
+          
+          if self.proto.is_none() {
+            if self.read_buf.len() == 41 {
+              return Err(io::Error::new(io::ErrorKind::Other, "Fake PQ req"));
+            }
+            if self.read_buf.len() >= 64 {
+              let mut seed = self.read_buf.split_off(64);
+              mem::swap(&mut seed, &mut self.read_buf);
+              let proto = Proto::from_seed(&seed, &self.secret)?;
+              link_pending = Some(proto.dc());
+              self.proto = Some(proto);
+            }
           }
         }
         Err(ref e) if e.kind() == ErrorKind::WouldBlock => {

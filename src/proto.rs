@@ -81,8 +81,12 @@ impl Proto {
     if buf_dec[56] != 0xef || buf_dec[57] != 0xef || buf_dec[58] != 0xef || buf_dec[59] != 0xef {
       return Err(io::Error::new(io::ErrorKind::Other, "Unknown protocol"));
     }
-    let dc = buf_dec[60..62].into_buf().get_i16_le().abs();
-    if dc == 0 || dc > 5 {
+    let mut dc = buf_dec[60..62].into_buf().get_i16_le().abs();
+    if dc == 0  {
+      warn!("Unsupported DC index: #0. using #1");
+      dc = 1;
+    }
+    if dc > 5 {
       return Err(io::Error::new(io::ErrorKind::Other, format!("Unsupported DC index: {}", dc)));
     }
     let dc_idx = (dc - 1) as usize;

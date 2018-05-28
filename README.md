@@ -8,9 +8,10 @@
 
 You can use the `cargo install` command:
 
-`$ rustup update`
-`$ cargo install mtproxy`
-
+```bash
+$ rustup update
+$ cargo install mtproxy
+```
 or a classic build and run:
 
 ```bash

@@ -8,7 +8,7 @@ use pool::DcPool;
 use pump::Pump;
 use slab::Slab;
 
-const MAX_PUMPS: usize = 2048;
+const MAX_PUMPS: usize = 1024 * 1024;
 const ROOT_TOKEN: Token = Token(<usize>::max_value() - 1);
 
 pub struct Server {
@@ -52,7 +52,7 @@ impl Server {
       .poll
       .register(&self.sock, ROOT_TOKEN, Ready::readable(), PollOpt::edge())?;
 
-    let mut events = Events::with_capacity(1024);
+    let mut events = Events::with_capacity(512);
 
     loop {
       self.poll.poll(&mut events, None)?;
@@ -75,6 +75,7 @@ impl Server {
       let token = event.token();
 
       if token == ROOT_TOKEN {
+        trace!("accepting new connection");
         self.accept()?;
         continue;
       }
@@ -98,12 +99,6 @@ impl Server {
             let buf = pump.pull();
             if buf.len() > 0 {
               peer.push(&buf);
-              match peer.flush() {
-                Err(e) => {
-                  warn!("failed to write first data: {:?}", e);
-                }
-                _ => {}
-              }
             }
             new_peers.insert(token, peer);
           }
@@ -207,12 +202,6 @@ impl Server {
       pump.interest(),
       PollOpt::edge() | PollOpt::oneshot(),
     )?;
-
-    info!(
-      "new connection: {:?} from {}",
-      token,
-      pump.sock().peer_addr()?
-    );
 
     Ok(())
   }
