@@ -127,7 +127,7 @@ impl Server {
           }
         }
       }
-      
+
       if readiness.is_hup() {
         trace!("hup event: {:?}", event.token());
         stale.insert(token);
@@ -206,25 +206,6 @@ impl Server {
     Ok(())
   }
 
-  fn drop_pump(&mut self, token: Token) -> io::Result<()> {
-    self.detached.remove(&token);
-
-    let pump = self.pumps.remove(token.0);
-    let pump = pump.borrow_mut();
-
-    info!("dropping pump: {:?}", token);
-    self.poll.deregister(pump.sock())?;
-    match self.links.remove(&token) {
-      Some(peer_token) => {
-        info!("dropping link to peer: {:?} -> {:?}", token, peer_token);
-        self.links.remove(&peer_token);
-        self.detached.insert(peer_token);
-      }
-      _ => {}
-    }
-    Ok(())
-  }
-
   fn fan_out(&self, pump: &mut Pump, peer_token: &Token) -> io::Result<()> {
     trace!("fan out to {:?}", peer_token);
     let buf = pump.pull();
@@ -264,6 +245,25 @@ impl Server {
       PollOpt::edge() | PollOpt::oneshot(),
     )?;
 
+    Ok(())
+  }
+
+  fn drop_pump(&mut self, token: Token) -> io::Result<()> {
+    self.detached.remove(&token);
+
+    let pump = self.pumps.remove(token.0);
+    let pump = pump.borrow_mut();
+
+    info!("dropping pump: {:?}", token);
+    self.poll.deregister(pump.sock())?;
+    match self.links.remove(&token) {
+      Some(peer_token) => {
+        info!("dropping link to peer: {:?} -> {:?}", token, peer_token);
+        self.links.remove(&peer_token);
+        self.detached.insert(peer_token);
+      }
+      _ => {}
+    }
     Ok(())
   }
 }
