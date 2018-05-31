@@ -15,7 +15,7 @@ pub struct Server {
   sock: TcpListener,
   poll: Poll,
   secret: Vec<u8>,
-  dc_pool: DcPool,
+  pool: DcPool,
   pumps: Slab<RefCell<Pump>>,
   detached: HashSet<Token>,
   links: HashMap<Token, Token>,
@@ -32,13 +32,17 @@ impl Server {
 
     Server {
       secret,
-      dc_pool: DcPool::new(),
+      pool: DcPool::new(),
       detached: HashSet::new(),
       sock: TcpListener::bind(&addr).expect("Failed to bind"),
       poll: Poll::new().expect("Failed to create Poll"),
       pumps: Slab::with_capacity(MAX_PUMPS),
       links: HashMap::new(),
     }
+  }
+
+  pub fn init(&mut self) -> io::Result<()> {
+    self.pool.start()
   }
 
   pub fn secret(&self) -> String {
@@ -63,7 +67,6 @@ impl Server {
         self.links.len(),
         self.detached.len()
       );
-      self.dc_pool.invalidate();
     }
   }
 
@@ -93,15 +96,18 @@ impl Server {
       if readiness.is_readable() {
         trace!("read event: {:?}", token);
         match pump.drain() {
-          Ok(Some(mut dc_idx)) => {
-            let sock = self.dc_pool.get(dc_idx)?;
-            let mut peer = Pump::new(sock);
-            let buf = pump.pull();
-            if buf.len() > 0 {
-              peer.push(&buf);
+          Ok(Some(mut dc_idx)) => match self.pool.get(dc_idx) {
+            Some(mut peer) => {
+              let buf = pump.pull();
+              if buf.len() > 0 {
+                peer.push(&buf);
+              }
+              new_peers.insert(token, peer);
             }
-            new_peers.insert(token, peer);
-          }
+            None => {
+              stale.insert(token);
+            }
+          },
           Ok(_) => {}
           Err(e) => {
             warn!("drain failed: {:?}: {}", token, e);
@@ -190,7 +196,7 @@ impl Server {
       }
     };
 
-    let pump = Pump::from_secret(&self.secret, sock);
+    let pump = Pump::downstream(&self.secret, sock);
     let idx = self.pumps.insert(RefCell::new(pump));
     let pump = self.pumps.get(idx).unwrap().borrow();
 

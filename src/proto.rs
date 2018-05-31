@@ -10,13 +10,13 @@ use rand::RngCore;
 
 pub struct Proto {
   seed: Vec<u8>,
-  dc_idx: usize,
+  dc: i16,
   dec: Box<SynchronousStreamCipher>,
   enc: Box<SynchronousStreamCipher>,
 }
 
 impl Proto {
-  pub fn new() -> Proto {
+  pub fn new(_secret: &[u8]) -> Proto {
     let mut buf = vec![0u8; 64];
     let mut rng = rand::thread_rng();
     loop {
@@ -56,7 +56,7 @@ impl Proto {
 
     Proto {
       seed: buf,
-      dc_idx: 0,
+      dc: 0,
       dec,
       enc,
     }
@@ -81,18 +81,10 @@ impl Proto {
     if buf_dec[56] != 0xef || buf_dec[57] != 0xef || buf_dec[58] != 0xef || buf_dec[59] != 0xef {
       return Err(io::Error::new(io::ErrorKind::Other, "Unknown protocol"));
     }
-    let mut dc = buf_dec[60..62].into_buf().get_i16_le().abs();
-    if dc == 0  {
-      warn!("Unsupported DC index: #0. using #1");
-      dc = 1;
-    }
-    if dc > 5 {
-      return Err(io::Error::new(io::ErrorKind::Other, format!("Unsupported DC index: {}", dc)));
-    }
-    let dc_idx = (dc - 1) as usize;
+    let dc = buf_dec[60..62].into_buf().get_i16_le();
     Ok(Proto {
       seed: buf.to_vec(),
-      dc_idx,
+      dc,
       dec,
       enc,
     })
@@ -102,8 +94,8 @@ impl Proto {
     &self.seed
   }
 
-  pub fn dc(&self) -> usize {
-    self.dc_idx
+  pub fn dc(&self) -> i16 {
+    self.dc
   }
 
   pub fn dec(&mut self, input: &[u8], output: &mut [u8]) {

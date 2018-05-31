@@ -1,16 +1,14 @@
 #![deny(warnings)]
 
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate log;
-
 extern crate bytes;
 extern crate clap;
 extern crate crypto;
 extern crate env_logger;
 extern crate mio;
 extern crate rand;
+extern crate reqwest;
 extern crate slab;
 
 mod pool;
@@ -57,9 +55,11 @@ fn main() -> Result<(), io::Error> {
     .parse()
     .expect(&format!("Not supported address: {}", addr));
 
-  let mut serv = Server::new(addr, seed);
-  println!("Secret: {}\n", serv.secret());
+  let mut server = Server::new(addr, seed);
+  server.init()?;
+
+  println!("Secret: {}\n", server.secret());
   println!("Ip:     {}", addr.ip());
   println!("Port:   {}", addr.port());
-  serv.run()
+  server.run()
 }

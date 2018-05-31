@@ -19,7 +19,7 @@ pub struct Pump {
 }
 
 impl Pump {
-  pub fn from_secret(secret: &[u8], sock: TcpStream) -> Pump {
+  pub fn downstream(secret: &[u8], sock: TcpStream) -> Pump {
     Pump {
       sock,
       secret: secret.to_vec(),
@@ -30,15 +30,15 @@ impl Pump {
     }
   }
 
-  pub fn new(sock: TcpStream) -> Pump {
-    let seed_proto = Proto::new();
+  pub fn upstream(secret: &[u8], sock: TcpStream) -> Pump {
+    let proto = Proto::new(secret);
     let mut write_buf = Vec::with_capacity(BUF_SIZE);
-    write_buf.append(&mut seed_proto.seed().to_vec());
+    write_buf.append(&mut proto.seed().to_vec());
 
     Pump {
       sock,
       secret: vec![],
-      proto: Some(seed_proto),
+      proto: Some(proto),
       interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
       read_buf: Vec::with_capacity(BUF_SIZE),
       write_buf,
@@ -107,7 +107,7 @@ impl Pump {
     Ok(())
   }
 
-  pub fn drain(&mut self) -> io::Result<Option<usize>> {
+  pub fn drain(&mut self) -> io::Result<Option<i16>> {
     let mut link_pending = None;
 
     loop {
