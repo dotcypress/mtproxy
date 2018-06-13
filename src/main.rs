@@ -8,14 +8,17 @@ extern crate bytes;
 extern crate crypto;
 extern crate mio;
 extern crate rand;
-extern crate reqwest;
+extern crate rustls;
 extern crate slab;
 extern crate stderrlog;
+extern crate webpki;
+extern crate webpki_roots;
 
 mod pool;
 mod proto;
 mod proxy;
 mod pump;
+mod config;
 
 use std::{io, net::SocketAddr};
 
@@ -28,7 +31,7 @@ struct Cli {
     short = "a", long = "addr", default_value = "0.0.0.0:1984", help = "Listening address."
   )]
   addr: SocketAddr,
-  
+
   #[structopt(long = "ipv6", help = "Use IPv6.")]
   ipv6: bool,
 
