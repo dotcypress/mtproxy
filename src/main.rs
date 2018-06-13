@@ -1,65 +1,67 @@
-#![deny(warnings)]
+//#![deny(warnings)]
 
 #[macro_use]
 extern crate log;
+#[macro_use]
+extern crate structopt;
 extern crate bytes;
-extern crate clap;
 extern crate crypto;
-extern crate env_logger;
 extern crate mio;
 extern crate rand;
 extern crate reqwest;
 extern crate slab;
+extern crate stderrlog;
 
 mod pool;
 mod proto;
 mod proxy;
 mod pump;
 
-use std::io;
+use std::{io, net::SocketAddr};
 
-use clap::{App, Arg};
 use proxy::Server;
+use structopt::StructOpt;
+
+#[derive(Debug, StructOpt)]
+struct Cli {
+  #[structopt(
+    short = "a", long = "addr", default_value = "0.0.0.0:1984", help = "Listening address."
+  )]
+  addr: SocketAddr,
+  
+  #[structopt(long = "ipv6", help = "Use IPv6.")]
+  ipv6: bool,
+
+  #[structopt(short = "s", long = "seed", help = "Proxy secret seed.")]
+  seed: String,
+
+  #[structopt(long = "tag", help = "Proxy tag.")]
+  tag: Option<String>,
+
+  #[structopt(short = "v", long = "verbose", parse(from_occurrences))]
+  verbose: usize,
+
+  #[structopt(short = "q", long = "quiet", help = "Silence all output.")]
+  quiet: bool,
+}
 
 fn main() -> Result<(), io::Error> {
-  env_logger::init();
+  let cli = Cli::from_args();
 
-  let args = App::new("mtproxy")
-    .version(env!("CARGO_PKG_VERSION"))
-    .author("Vitaly Domnikov <dotcypress@gmail.com>")
-    .about("MTProto proxy server.")
-    .arg(
-      Arg::with_name("seed")
-        .value_name("SEED")
-        .short("s")
-        .long("seed")
-        .help("Proxy secret seed.")
-        .takes_value(true)
-        .required(true)
-        .display_order(0),
-    )
-    .arg(
-      Arg::with_name("addres")
-        .value_name("ADDRESS")
-        .short("a")
-        .long("addr")
-        .help("Listening address. Default value: 0.0.0.0:1984.")
-        .takes_value(true)
-        .display_order(1),
-    )
-    .get_matches();
+  stderrlog::new()
+    .module(module_path!())
+    .quiet(cli.quiet)
+    .verbosity(cli.verbose)
+    .timestamp(stderrlog::Timestamp::Second)
+    .init()
+    .unwrap();
 
-  let seed = args.value_of("seed").unwrap();
-  let addr = args.value_of("addres").unwrap_or("0.0.0.0:1984");
-  let addr = String::from(addr)
-    .parse()
-    .expect(&format!("Not supported address: {}", addr));
-
-  let mut server = Server::new(addr, seed);
+  let mut server = Server::new(cli.addr, &cli.seed, cli.ipv6, cli.tag);
   server.init()?;
-
-  println!("Secret: {}\n", server.secret());
-  println!("Ip:     {}", addr.ip());
-  println!("Port:   {}", addr.port());
+  if !cli.quiet {
+    println!("Secret: {}\n", server.secret());
+    println!("Ip:     {}", cli.addr.ip());
+    println!("Port:   {}", cli.addr.port());
+  }
   server.run()
 }

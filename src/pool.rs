@@ -1,3 +1,8 @@
+use mio::net::TcpStream;
+use pump::Pump;
+use rand;
+use rand::Rng;
+use reqwest;
 use std::collections::{HashMap, VecDeque};
 use std::io;
 use std::net::SocketAddr;
@@ -5,30 +10,28 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
 
-use mio::net::TcpStream;
-use pump::Pump;
-use rand;
-use rand::Rng;
-use reqwest;
-
-const MIN_POOL_SIZE: usize = 8;
+const MIN_POOL_SIZE: usize = 16;
 
 pub struct DcPool {
   secret: Vec<u8>,
+  ipv6: bool,
   conns: Arc<Mutex<HashMap<i16, VecDeque<TcpStream>>>>,
 }
 
 impl DcPool {
-  pub fn new() -> DcPool {
+  pub fn new(ipv6: bool) -> DcPool {
     DcPool {
+      ipv6,
       secret: vec![],
       conns: Arc::new(Mutex::new(HashMap::new())),
     }
   }
 
   pub fn start(&mut self) -> io::Result<()> {
-    let config = load_config()?;
+    let config = load_config(self.ipv6)?;
     self.secret = load_secret()?;
+
+    debug!("Starting connection pool. IPv6: {:?}", config);
 
     let conns = self.conns.clone();
     thread::spawn(move || {
@@ -91,9 +94,16 @@ fn load_secret() -> io::Result<Vec<u8>> {
   };
 }
 
-fn load_config() -> io::Result<HashMap<i16, Vec<SocketAddr>>> {
+fn load_config(ipv6: bool) -> io::Result<HashMap<i16, Vec<SocketAddr>>> {
   let mut config = HashMap::new();
-  match reqwest::get("https://core.telegram.org/getProxyConfig") {
+  let config_uri = if ipv6 {
+    "https://core.telegram.org/getProxyConfigV6"
+  } else {
+    "https://core.telegram.org/getProxyConfig"
+  };
+
+  debug!("Fetching config from {}", &config_uri);
+  match reqwest::get(config_uri) {
     Ok(mut resp) => match resp.text() {
       Ok(text) => {
         for line in text.lines() {

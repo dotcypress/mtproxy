@@ -22,7 +22,7 @@ pub struct Server {
 }
 
 impl Server {
-  pub fn new(addr: SocketAddr, seed: &str) -> Server {
+  pub fn new(addr: SocketAddr, seed: &str, ipv6: bool, _tag: Option<String>) -> Server {
     let mut sha = Sha256::new();
     let mut secret = vec![0u8; sha.output_bytes()];
 
@@ -32,7 +32,7 @@ impl Server {
 
     Server {
       secret,
-      pool: DcPool::new(),
+      pool: DcPool::new(ipv6),
       detached: HashSet::new(),
       sock: TcpListener::bind(&addr).expect("Failed to bind"),
       poll: Poll::new().expect("Failed to create Poll"),

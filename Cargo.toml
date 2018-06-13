@@ -20,11 +20,11 @@ repository = "dotcypress/mtproxy"
 
 [dependencies]
 bytes = "0.4.7"
-clap = "2.31.2"
-env_logger = "0.5.10"
 log = "0.4.1"
 mio = "0.6.14"
 rand = "0.5.0"
 reqwest = "0.8.5"
 rust-crypto = "0.2.36"
 slab = "0.4.0"
+stderrlog = "0.4.0"
+structopt = "0.2.10"
