@@ -2,7 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::io;
 use std::{cell::RefCell, net::SocketAddr, usize};
 
-use crypto::{digest::Digest, sha2::Sha256};
 use mio::{net::TcpListener, unix::UnixReady, Events, Poll, PollOpt, Ready, Token};
 use pool::DcPool;
 use pump::Pump;
@@ -22,16 +21,9 @@ pub struct Server {
 }
 
 impl Server {
-  pub fn new(addr: SocketAddr, seed: &str, ipv6: bool, _tag: Option<String>) -> Server {
-    let mut sha = Sha256::new();
-    let mut secret = vec![0u8; sha.output_bytes()];
-
-    sha.input_str(seed);
-    sha.result(&mut secret);
-    secret.truncate(16);
-
+  pub fn new(addr: SocketAddr, secret: Vec<u8>, ipv6: bool, _tag: Option<String>) -> Server {
     Server {
-      secret,
+      secret: secret,
       pool: DcPool::new(ipv6),
       detached: HashSet::new(),
       sock: TcpListener::bind(&addr).expect("Failed to bind"),
@@ -43,11 +35,6 @@ impl Server {
 
   pub fn init(&mut self) -> io::Result<()> {
     self.pool.start()
-  }
-
-  pub fn secret(&self) -> String {
-    let secret: Vec<String> = self.secret.iter().map(|b| format!("{:02x}", b)).collect();
-    secret.join("")
   }
 
   pub fn run(&mut self) -> io::Result<()> {
