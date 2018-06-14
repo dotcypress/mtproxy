@@ -1,13 +1,10 @@
+use mio::{net::TcpStream, unix::UnixReady, Ready};
+use proto::Proto;
 use std::io::{self, prelude::*, ErrorKind};
 use std::{mem, u16};
 
-use mio::{net::TcpStream, unix::UnixReady, Ready};
-
-use proto::Proto;
-
-const BUF_SIZE: usize = u16::MAX as usize;
-
-const MAX_READ_BUF_SIZE: usize = BUF_SIZE * 4;
+const BUF_SIZE: usize = 128 * 1024;
+const MAX_READ_BUF_SIZE: usize = u16::MAX as usize * 2;
 
 pub struct Pump {
   sock: TcpStream,
@@ -19,7 +16,7 @@ pub struct Pump {
 }
 
 impl Pump {
-  pub fn downstream(secret: &[u8], sock: TcpStream) -> Pump {
+  pub fn upstream(secret: &[u8], sock: TcpStream) -> Pump {
     Pump {
       sock,
       secret: secret.to_vec(),
@@ -30,14 +27,14 @@ impl Pump {
     }
   }
 
-  pub fn upstream(secret: &[u8], sock: TcpStream) -> Pump {
+  pub fn downstream(secret: &[u8], sock: TcpStream) -> Pump {
     let proto = Proto::new(secret);
     let mut write_buf = Vec::with_capacity(BUF_SIZE);
     write_buf.append(&mut proto.seed().to_vec());
 
     Pump {
       sock,
-      secret: vec![],
+      secret: secret.to_vec(),
       proto: Some(proto),
       interest: Ready::readable() | Ready::writable() | UnixReady::error() | UnixReady::hup(),
       read_buf: Vec::with_capacity(BUF_SIZE),
@@ -123,7 +120,7 @@ impl Pump {
           trace!("read {} bytes", n);
           buf.split_off(n);
           self.read_buf.extend(buf);
-          
+
           if self.proto.is_none() {
             if self.read_buf.len() == 41 {
               return Err(io::Error::new(io::ErrorKind::Other, "Fake PQ req"));

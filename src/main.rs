@@ -16,13 +16,13 @@ extern crate webpki;
 extern crate webpki_roots;
 
 mod config;
-mod pool;
 mod proto;
 mod proxy;
 mod pump;
 
 use std::{io, net::SocketAddr};
 
+use config::Config;
 use proxy::Server;
 use rustc_serialize::hex::FromHex;
 use structopt::StructOpt;
@@ -50,7 +50,13 @@ struct Cli {
   quiet: bool,
 }
 
-fn main() -> Result<(), io::Error> {
+fn main() {
+  if let Err(err) = run() {
+    eprintln!("Error: {}", err)
+  }
+}
+
+fn run() -> Result<(), io::Error> {
   let cli = Cli::from_args();
 
   stderrlog::new()
@@ -72,7 +78,15 @@ fn main() -> Result<(), io::Error> {
     Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "Mailformed secret")),
   };
 
-  let mut server = Server::new(cli.addr, secret, cli.ipv6, cli.tag);
-  server.init()?;
+  let tag = match cli.tag {
+    Some(tag) => match tag.from_hex() {
+      Ok(buf) => Some(buf.to_vec()),
+      Err(_) => return Err(io::Error::new(io::ErrorKind::Other, "Mailformed tag")),
+    },
+    None => None,
+  };
+
+  let config = Config::init(cli.addr, secret, tag, cli.ipv6)?;
+  let mut server = Server::new(config);
   server.run()
 }

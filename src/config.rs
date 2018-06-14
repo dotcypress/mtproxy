@@ -1,3 +1,5 @@
+use rand;
+use rand::Rng;
 use rustls::{ClientConfig, ClientSession, Stream};
 use std::collections::HashMap;
 use std::io;
@@ -9,13 +11,20 @@ use webpki::DNSNameRef;
 use webpki_roots::TLS_SERVER_ROOTS;
 
 pub struct Config {
-  pub secret: Vec<u8>,
-  pub servers: HashMap<i16, Vec<SocketAddr>>,
+  bind_addr: SocketAddr,
+  secret: Vec<u8>,
+  dc_secret: Vec<u8>,
+  servers: HashMap<i16, Vec<SocketAddr>>,
 }
 
 impl Config {
-  pub fn fetch(ipv6: bool) -> io::Result<Config> {
-    let secret = get("/getProxySecret")?;
+  pub fn init(
+    bind_addr: SocketAddr,
+    secret: Vec<u8>,
+    _tag: Option<Vec<u8>>,
+    ipv6: bool,
+  ) -> io::Result<Config> {
+    let dc_secret = Config::http_get("/getProxySecret")?;
     let mut servers = HashMap::new();
 
     let path = if ipv6 {
@@ -24,7 +33,7 @@ impl Config {
       "/getProxyConfig"
     };
 
-    match get(path) {
+    match Config::http_get(path) {
       Ok(buf) => {
         let text = String::from_utf8_lossy(&buf);
         for line in text.lines() {
@@ -58,26 +67,51 @@ impl Config {
       }
     };
 
-    Ok(Config { secret, servers })
+    Ok(Config {
+      secret,
+      dc_secret,
+      servers,
+      bind_addr,
+    })
   }
-}
 
-fn get(path: &str) -> io::Result<Vec<u8>> {
-  let mut config = ClientConfig::new();
-  config
-    .root_store
-    .add_server_trust_anchors(&TLS_SERVER_ROOTS);
+  pub fn bind_addr(&self) -> &SocketAddr {
+    &self.bind_addr
+  }
 
-  let dns_name = DNSNameRef::try_from_ascii_str("core.telegram.org").unwrap();
-  let mut sess = ClientSession::new(&Arc::new(config), dns_name);
-  let mut sock = TcpStream::connect("core.telegram.org:443")?;
-  let mut tls = Stream::new(&mut sess, &mut sock);
-  let payload = format!(
+  pub fn secret(&self) -> &[u8] {
+    &self.secret
+  }
+
+  pub fn dc_addr(&self, dc_idx: i16) -> Option<&SocketAddr> {
+    let mut rng = rand::thread_rng();
+    self
+      .servers
+      .get(&dc_idx)
+      .and_then(|servers| rng.choose(&servers))
+  }
+
+  pub fn dc_secret(&self) -> &[u8] {
+    &self.dc_secret
+  }
+
+  fn http_get(path: &str) -> io::Result<Vec<u8>> {
+    let mut config = ClientConfig::new();
+    config
+      .root_store
+      .add_server_trust_anchors(&TLS_SERVER_ROOTS);
+
+    let dns_name = DNSNameRef::try_from_ascii_str("core.telegram.org").unwrap();
+    let mut sess = ClientSession::new(&Arc::new(config), dns_name);
+    let mut sock = TcpStream::connect("core.telegram.org:443")?;
+    let mut tls = Stream::new(&mut sess, &mut sock);
+    let payload = format!(
     "GET {} HTTP/1.1\r\nHost: core.telegram.org\r\nConnection: close\r\nAccept-Encoding: identity\r\n\r\n",
     path
   );
-  tls.write_all(payload.as_bytes())?;
-  let mut buf = Vec::new();
-  tls.read_to_end(&mut buf).unwrap_or(0);
-  Ok(buf)
+    tls.write_all(payload.as_bytes())?;
+    let mut buf = Vec::new();
+    tls.read_to_end(&mut buf).unwrap_or(0);
+    Ok(buf)
+  }
 }

@@ -1,40 +1,38 @@
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::io;
-use std::{cell::RefCell, net::SocketAddr, usize};
+use std::usize;
 
-use mio::{net::TcpListener, unix::UnixReady, Events, Poll, PollOpt, Ready, Token};
-use pool::DcPool;
+use config::Config;
+use mio::net::{TcpListener, TcpStream};
+use mio::unix::UnixReady;
+use mio::{Events, Poll, PollOpt, Ready, Token};
 use pump::Pump;
 use slab::Slab;
 
-const MAX_PUMPS: usize = 1024 * 1024;
+const MAX_PUMPS: usize = 256 * 1024;
 const ROOT_TOKEN: Token = Token(<usize>::max_value() - 1);
 
 pub struct Server {
+  config: Config,
   sock: TcpListener,
   poll: Poll,
-  secret: Vec<u8>,
-  pool: DcPool,
   pumps: Slab<RefCell<Pump>>,
   detached: HashSet<Token>,
   links: HashMap<Token, Token>,
 }
 
 impl Server {
-  pub fn new(addr: SocketAddr, secret: Vec<u8>, ipv6: bool, _tag: Option<String>) -> Server {
+  pub fn new(config: Config) -> Server {
+    let sock = TcpListener::bind(&config.bind_addr()).expect("Failed to bind");
     Server {
-      secret: secret,
-      pool: DcPool::new(ipv6),
+      config,
+      sock,
       detached: HashSet::new(),
-      sock: TcpListener::bind(&addr).expect("Failed to bind"),
       poll: Poll::new().expect("Failed to create Poll"),
       pumps: Slab::with_capacity(MAX_PUMPS),
       links: HashMap::new(),
     }
-  }
-
-  pub fn init(&mut self) -> io::Result<()> {
-    self.pool.start()
   }
 
   pub fn run(&mut self) -> io::Result<()> {
@@ -83,18 +81,21 @@ impl Server {
       if readiness.is_readable() {
         trace!("read event: {:?}", token);
         match pump.drain() {
-          Ok(Some(mut dc_idx)) => match self.pool.get(dc_idx) {
-            Some(mut peer) => {
-              let buf = pump.pull();
-              if buf.len() > 0 {
-                peer.push(&buf);
+          Ok(Some(mut dc_idx)) => {
+            let stream = match &self.config.dc_addr(dc_idx) {
+              Some(addr) => TcpStream::connect(addr)?,
+              None => {
+                warn!("failed to resolve dc address: {}", dc_idx);
+                continue;
               }
-              new_peers.insert(token, peer);
+            };
+            let mut peer = Pump::downstream(&self.config.dc_secret(), stream);
+            let buf = pump.pull();
+            if buf.len() > 0 {
+              peer.push(&buf);
             }
-            None => {
-              stale.insert(token);
-            }
-          },
+            new_peers.insert(token, peer);
+          }
           Ok(_) => {}
           Err(e) => {
             warn!("drain failed: {:?}: {}", token, e);
@@ -183,7 +184,7 @@ impl Server {
       }
     };
 
-    let pump = Pump::downstream(&self.secret, sock);
+    let pump = Pump::upstream(self.config.secret(), sock);
     let idx = self.pumps.insert(RefCell::new(pump));
     let pump = self.pumps.get(idx).unwrap().borrow();
 
